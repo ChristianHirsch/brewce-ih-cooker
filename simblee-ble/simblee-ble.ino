@@ -24,22 +24,22 @@ It is suppose to be used with the simbleeTemperature iPhone application.
 #include <Wire.h>
 #include <OneWire.h>
 
-#define TEMP_PIN 3
+#define TEMP_PIN 0
+#define POWER_I_PIN 6
+#define POWER_O_PIN 2
+#define IO_I_PIN 5
+#define IO_O_PIN 3
 
 OneWire ds(TEMP_PIN);
 
 float temp = 20.0;
 
-void setup() {
-  Serial.begin(9600);
-  printf("setup()\n");
+unsigned long ble_sent = 0;
 
-  Wire.begin();
-  
-  // this is the data we want to appear in the advertisement
-  // (if the deviceName and advertisementData are too long to fix into the 31 byte
-  // ble advertisement packet, then the advertisementData is truncated first down to
-  // a single byte, then it will truncate the deviceName)
+boolean ble_on = false;
+uint8_t ble_value = 255;
+
+void setup() {
   SimbleeBLE.advertisementData = "brewce-ih-cooker-ble";
 
   // start the BLE stack
@@ -48,79 +48,95 @@ void setup() {
 
   SimbleeBLE_device_name = "brewce_cooker";
   SimbleeBLE_begin();
+
+  pinMode(POWER_I_PIN, INPUT);
+  pinMode(POWER_O_PIN, OUTPUT);
+  pinMode(IO_I_PIN, INPUT);
+  pinMode(IO_O_PIN, OUTPUT);
+
+  analogWrite(POWER_O_PIN, 255);
+  digitalWrite(IO_O_PIN, LOW);
 }
 
 void loop() {
   // sample once per second
-  Simblee_ULPDelay( SECONDS(1) );
+  unsigned long now = millis();
 
-  // get a cpu temperature sample
-  // degrees c (-198.00 to +260.00)
-  // degrees f (-128.00 to +127.00)
-  /*
-  if(Serial.available() > 0)
+  analogWrite(POWER_O_PIN, 0);
+  digitalWrite(IO_O_PIN, HIGH);
+/*
+  if(digitalRead(IO_I_PIN) == HIGH)
   {
-    float tmp = Serial.parseFloat();
-    if(tmp != 0.0)
-      temp = tmp;
+    digitalWrite(IO_O_PIN, HIGH);
+    analogWrite(POWER_O_PIN, map(analogRead(POWER_I_PIN), 1, 410, 0, 255));
   }
-  */
-
-  // send the sample to the iPhone
-  //SimbleeBLE.sendFloat(Simblee_temperature(CELSIUS));
-  float temp = getTemp();
-  if(temp != -1000.0f)
-    SimbleeBLE.sendFloat(getTemp());
+  else if(ble_on == true)
+  {
+    digitalWrite(IO_O_PIN, HIGH);
+    analogWrite(POWER_O_PIN, ble_value);
+  }
+  else
+  {
+    digitalWrite(IO_O_PIN, LOW);
+    analogWrite(POWER_O_PIN, 255);
+  }
+*/
+  if((now - ble_sent) > 1000)
+  {
+    ble_sent = now;
+    float temp = getTemp();
+    if(digitalRead(IO_I_PIN) == LOW)
+      SimbleeBLE.sendFloat(0.0f);
+    else
+      SimbleeBLE.sendFloat(1.0f);
+    //if(temp != -1000.0f)
+    //  SimbleeBLE.sendFloat(temp);
+  }
+  
+  Simblee_ULPDelay( 100 );
 }
 
 void SimbleeBLE_onConnect()
 {
-  printf("SimbleeBLE_onConnect()\n");
 }
 
 void SimbleeBLE_onDisconnect()
 {
-  printf("SimbleeBLE_onDisconnect()\n");
 }
 
 void SimbleeBLE_onReceive(char *data, int len) {
-  printf("SimbleeBLE_onReceive(");
-  for(int i=0; i<len; i++)
-    printf(" %02x", data[i]);
-  printf(", %i)\n", len);
-
   if(len != 2)
     return;
   
   uint8_t state = data[0];
   uint8_t power = data[1];
 
-  Wire.beginTransmission(69);
-
   // ON - Manual
   if(state == 1)
   {
-    Wire.write(1);Wire.write(255-power);
+    ble_on = true;
+    ble_value = 255 - power;
   }
   // ON - Auto
   else if(state == 2)
   {
     if(power < 36)
     {
-      Wire.write(0);Wire.write(255);
+      ble_on = false;
+      ble_value = 255;
     }
     else
     {
-      Wire.write(1);Wire.write(255 - map(power, 36, 255, 0, 255));
+      ble_on = true;
+      ble_value = 255 - map(power, 36, 255, 0, 255);
     }
   }
   // OFF
   else
   {
-    Wire.write(0);Wire.write(255);
+    ble_on = false;
+    ble_value = 255;
   }
-  
-  Wire.endTransmission();
 }
 
 float getTemp(){
@@ -136,12 +152,10 @@ float getTemp(){
   }
  
   if ( OneWire::crc8( addr, 7) != addr[7]) {
-      Serial.println("CRC is not valid!");
       return -1000;
   }
  
   if ( addr[0] != 0x10 && addr[0] != 0x28) {
-      Serial.print("Device is not recognized");
       return -1000;
   }
  
