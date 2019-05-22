@@ -22,7 +22,7 @@ void setup()
 {
   Wire.begin(69);                // join i2c bus with address #4
   Wire.onReceive(receiveEvent); // register event
-  Serial.begin(9600);           // start serial for output
+  //Serial.begin(9600);           // start serial for output
 
   pinMode(IO_PIN, OUTPUT);
   digitalWrite(IO_PIN, LOW);
@@ -73,8 +73,10 @@ void receiveEvent(int howMany)
 
   io = (command != 0);
   power_level = value;
+  /*
   Serial.print("Received: ");
   Serial.print(command);
   Serial.print(" ");
   Serial.println(value);
+  */
 }

@@ -1,36 +1,33 @@
-/*
-The sketch demonstrates how to do accept a Bluetooth Low Energy 4
-Advertisement connection with the Simblee, then send CPU temperature
-updates once a second.
+// brewce UUID: b5e9d1f2-cdb3-4758-a1b0-1d6ddd22dd0d
 
-It is suppose to be used with the simbleeTemperature iPhone application.
-*/
-
-/*
- * Copyright (c) 2015 RF Digital Corp. All Rights Reserved.
- *
- * The source code contained in this file and all intellectual property embodied in
- * or covering the source code is the property of RF Digital Corp. or its licensors.
- * Your right to use this source code and intellectual property is non-transferable,
- * non-sub licensable, revocable, and subject to terms and conditions of the
- * SIMBLEE SOFTWARE LICENSE AGREEMENT.
- * http://www.simblee.com/licenses/SimbleeSoftwareLicenseAgreement.txt
- *
- * THE SOURCE CODE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
- *
- * This heading must NOT be removed from this file.
- */
 #include <SimbleeBLE.h>
 #include <Wire.h>
 #include <OneWire.h>
+#include <SPI.h>
+#include "Adafruit_MAX31855.h"
 
 #define TEMP_PIN 0
-#define POWER_I_PIN 6
-#define POWER_O_PIN 2
-#define IO_I_PIN 5
-#define IO_O_PIN 3
+/*
+#define POWER_I_PIN 3
+#define POWER_O_PIN 16
+#define IO_I_PIN 11
+#define IO_O_PIN 9
+*/
 
-OneWire ds(TEMP_PIN);
+#define LED_PIN     19
+
+#define POWER_I_PIN 3
+#define POWER_O_PIN 16
+
+#define IO_I_PIN    11
+#define IO_O_PIN    9
+
+#define MAX_SO_PIN  10
+#define MAX_CS_PIN  13
+#define MAX_SCK_PIN 14
+
+//Create a MAX31855 reference and tell it what pin does what
+Adafruit_MAX31855 kTC(MAX_SCK_PIN, MAX_CS_PIN, MAX_SO_PIN);
 
 float temp = 20.0;
 
@@ -39,60 +36,99 @@ unsigned long ble_sent = 0;
 boolean ble_on = false;
 uint8_t ble_value = 255;
 
+struct
+{
+  float    tempInternal;
+  float    tempExternal;
+  uint16_t power;
+  uint8_t  status;
+} ble_data;
+
 void setup() {
+  //Serial.begin(9600);
+  
+  /* --- BLE ------------------------ */
   SimbleeBLE.advertisementData = "brewce-ih-cooker-ble";
+  // do iBeacon advertising
+  SimbleeBLE.iBeacon = true;
+  
+  // override the default iBeacon settings
+  uint8_t uuid[16] = {0xb5, 0xe9, 0xd1, 0xf2, 0xcd, 0xb3, 0x47, 0x58, 0xa1, 0xb0, 0x1d, 0x6d, 0xdd, 0x22, 0xdd, 0x0d};
+  memcpy(SimbleeBLE.iBeaconUUID, uuid, sizeof(SimbleeBLE.iBeaconUUID));
+  SimbleeBLE.iBeaconMajor = 1;
+  SimbleeBLE.iBeaconMinor = 1;
+  SimbleeBLE.iBeaconMeasuredPower = 0xC6;
+  
+  //SimbleeBLE.txPowerLevel = 4;
+  //SimbleeBLE.advertisementInterval = 900;
+  
+  SimbleeBLE.begin(); // start the BLE stack
 
-  // start the BLE stack
-  SimbleeBLE.begin();
-  SimbleeBLE.end();
-
-  SimbleeBLE_device_name = "brewce_cooker";
-  SimbleeBLE_begin();
+  //SimbleeBLE_device_name = "brewce_cooker";
+  //SimbleeBLE_begin();
 
   pinMode(POWER_I_PIN, INPUT);
   pinMode(POWER_O_PIN, OUTPUT);
   pinMode(IO_I_PIN, INPUT);
   pinMode(IO_O_PIN, OUTPUT);
+  
+  pinMode(LED_PIN, OUTPUT);
 
-  analogWrite(POWER_O_PIN, 255);
+  //analogWrite(POWER_O_PIN, 255);
+  analogWrite(POWER_O_PIN, 127);
   digitalWrite(IO_O_PIN, LOW);
 }
 
 void loop() {
   // sample once per second
+  
   unsigned long now = millis();
 
-  analogWrite(POWER_O_PIN, 0);
-  digitalWrite(IO_O_PIN, HIGH);
-/*
-  if(digitalRead(IO_I_PIN) == HIGH)
+  boolean power_on = digitalRead(IO_I_PIN);
+  
+  if(power_on == true)
+    ble_data.status = 1;
+  else
+    ble_data.status = 0;
+
+  ble_data.power = analogRead(POWER_I_PIN);
+  
+  uint8_t power_value = min(map(ble_data.power, 5, 1000, 0, 255), 255);
+  
+  //SimbleeBLE.send((char *)&ble_data, sizeof(ble_data));
+  
+  if(power_on == true)
   {
+    digitalWrite(LED_PIN,  HIGH);
     digitalWrite(IO_O_PIN, HIGH);
-    analogWrite(POWER_O_PIN, map(analogRead(POWER_I_PIN), 1, 410, 0, 255));
+    analogWrite(POWER_O_PIN, power_value);
   }
   else if(ble_on == true)
   {
+    digitalWrite(LED_PIN,  HIGH);
     digitalWrite(IO_O_PIN, HIGH);
     analogWrite(POWER_O_PIN, ble_value);
   }
   else
   {
+    digitalWrite(LED_PIN,  LOW);
     digitalWrite(IO_O_PIN, LOW);
-    analogWrite(POWER_O_PIN, 255);
+    analogWrite(POWER_O_PIN, 0);
   }
-*/
-  if((now - ble_sent) > 1000)
+
+  if(now > ble_sent)
   {
-    ble_sent = now;
-    float temp = getTemp();
-    if(digitalRead(IO_I_PIN) == LOW)
-      SimbleeBLE.sendFloat(0.0f);
-    else
-      SimbleeBLE.sendFloat(1.0f);
-    //if(temp != -1000.0f)
-    //  SimbleeBLE.sendFloat(temp);
+    ble_sent = now + 1000;
+
+    ble_data.tempInternal = kTC.readInternal();
+    ble_data.tempExternal = kTC.readCelsius();
+    if(ble_data.tempExternal == ble_data.tempExternal)
+    {
+      SimbleeBLE.sendFloat(ble_data.tempExternal);
+      //Serial.println(ble_data.tempExternal);
+    }
   }
-  
+
   Simblee_ULPDelay( 100 );
 }
 
@@ -109,13 +145,13 @@ void SimbleeBLE_onReceive(char *data, int len) {
     return;
   
   uint8_t state = data[0];
-  uint8_t power = data[1];
+  uint8_t power = 255 - data[1];
 
   // ON - Manual
   if(state == 1)
   {
     ble_on = true;
-    ble_value = 255 - power;
+    ble_value = power;
   }
   // ON - Auto
   else if(state == 2)
@@ -123,63 +159,18 @@ void SimbleeBLE_onReceive(char *data, int len) {
     if(power < 36)
     {
       ble_on = false;
-      ble_value = 255;
+      ble_value = 0;
     }
     else
     {
       ble_on = true;
-      ble_value = 255 - map(power, 36, 255, 0, 255);
+      ble_value = map(power, 36, 255, 0, 255);
     }
   }
   // OFF
   else
   {
     ble_on = false;
-    ble_value = 255;
+    ble_value = 0;
   }
-}
-
-float getTemp(){
-  //returns the temperature from one DS18S20 in DEG Celsius
- 
-  byte data[12];
-  byte addr[8];
- 
-  if ( !ds.search(addr)) {
-      //no more sensors on chain, reset search
-      ds.reset_search();
-      return -1000;
-  }
- 
-  if ( OneWire::crc8( addr, 7) != addr[7]) {
-      return -1000;
-  }
- 
-  if ( addr[0] != 0x10 && addr[0] != 0x28) {
-      return -1000;
-  }
- 
-  ds.reset();
-  ds.select(addr);
-  ds.write(0x44,1); // start conversion, with parasite power on at the end
- 
-  byte present = ds.reset();
-  ds.select(addr);    
-  ds.write(0xBE); // Read Scratchpad
- 
-  
-  for (int i = 0; i < 9; i++) { // we need 9 bytes
-    data[i] = ds.read();
-  }
-  
-  ds.reset_search();
-  
-  byte MSB = data[1];
-  byte LSB = data[0];
- 
-  float tempRead = ((MSB << 8) | LSB); //using two's compliment
-  float TemperatureSum = tempRead / 16;
-  
-  return TemperatureSum;
-  
 }
